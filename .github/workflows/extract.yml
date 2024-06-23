@@ -1,0 +1,95 @@
+on:
+  workflow_dispatch:
+    inputs:
+      vs_BuildTools:
+        description: "Visual Studio Build Tools installer"
+        default: true
+      vs_SDK:
+        description: "Windows SDK installer"
+        default: true
+      vs_Installer:
+        description: "Visual Studio Installer"
+        default: true
+      vs_ProgramData:
+        description: "Visual Studio ProgramData"
+        default: true
+      vs_Registry:
+        description: "Visual Studio and Windows SDK registry keys"
+        default: true
+
+defaults:
+  run:
+    shell: poweshell -Command "docker exec -i extract powershell -ExecutionPolicy Bypass -Command ""& '$('{0}' -replace '^[a-zA-Z]:', 'C:')'"""
+
+name: Extract
+jobs:
+  extract:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Create container
+        run: |
+          $workspace = '${{ github.workspace }}'
+          $parent = Split-Path -Path $workspace -Parent | Split-Path -Parent
+          $container = ($parent -replace '^[a-zA-Z]:', 'C:')
+
+          docker run --name extract -v ${parent}:${container} -w ($workspace -replace '^[a-zA-Z]:', 'C:') -d -t mcr.microsoft.com/windows/servercore:ltsc2022 "powershell"
+        shell: pwsh
+      - name: Download installer
+        run: |
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vs_buildtools.exe -OutFile vs_BuildTools.exe
+      - name: Install build tools
+        run: |
+          Start-Process -FilePath .\vs_BuildTools.exe -Wait -ArgumentList '--quiet --wait --norestart --nocache --installPath "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools" --add Microsoft.VisualStudio.Component.VC.CoreBuildTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Redist.14.Latest --add Microsoft.VisualStudio.Component.VC.ATL --add Microsoft.VisualStudio.Component.VC.ATLMFC --add Microsoft.VisualStudio.Component.Windows11SDK.22000 --add Microsoft.VisualStudio.Component.VC.CMake.Project'
+      - name: Extract registry
+        if: ${{ github.event.inputs.vs_Registry == 'true' }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $keys = @(
+              "HKLM\SOFTWARE\Microsoft\VisualStudio\",
+              "HKLM\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\",
+              "HKLM\SOFTWARE\Microsoft\MSBuild\",
+              "HKLM\SOFTWARE\WOW6432Node\Microsoft\MSBuild\",
+              "HKLM\SOFTWARE\Microsoft\Windows Kits\"
+              "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\"
+              "HKCR\CLSID\{177F0C4A-1CD3-4DE7-A32C-71DBBB9FA36D}"
+          )
+
+          $counter = 1
+          foreach ($key in $keys) {
+              $exportPath = "key$counter.reg"
+              $exportCommand = "reg export `"$key`" `"$exportPath`" /y"
+              Invoke-Expression $exportCommand
+              $counter++
+          }
+      - name: Compress Build tools
+        if: ${{ github.event.inputs.vs_BuildTools == 'true' }}
+        run: |
+          Compress-Archive -Path 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools' -DestinationPath build-tools.zip
+      - name: Compress SDK
+        if: ${{ github.event.inputs.vs_SDK == 'true' }}
+        run: |
+          Compress-Archive -Path 'C:\Program Files (x86)\Windows Kits\' -DestinationPath build-tools.zip -Update
+      - name: Compress Installer
+        if: ${{ github.event.inputs.vs_Installer == 'true' }}
+        run: |
+          Compress-Archive -Path 'C:\Program Files (x86)\Microsoft Visual Studio\Installer' -DestinationPath build-tools.zip -Update
+      - name: Compress ProgramData
+        if: ${{ github.event.inputs.vs_ProgramData == 'true' }}
+        run: |
+          Compress-Archive -Path 'C:\ProgramData\Microsoft\VisualStudio' -DestinationPath build-tools.zip -Update
+      - name: Upload registry
+        if: ${{ github.event.inputs.vs_Registry == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry
+          path: key*.reg
+      - name: Upload build tools
+        if: ${{ github.event.inputs.vs_BuildTools == 'true' || github.event.inputs.vs_SDK == 'true' || github.event.inputs.vs_Installer == 'true' || github.event.inputs.vs_ProgramData == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-tools
+          path: build-tools.zip
