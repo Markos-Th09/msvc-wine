@@ -19,7 +19,7 @@ on:
 
 defaults:
   run:
-    shell: poweshell -Command "docker exec -i extract powershell -ExecutionPolicy Bypass -Command ""& '$('{0}' -replace '^[a-zA-Z]:', 'C:')'"""
+    shell: powershell -Command "docker exec -i extract powershell -ExecutionPolicy Bypass -Command ""& '$('{0}' -replace '^[a-zA-Z]:', 'C:')'"""
 
 name: Extract
 jobs:
